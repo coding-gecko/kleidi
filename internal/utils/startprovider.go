@@ -2,11 +2,12 @@ package utils
 
 import (
 	"context"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/beezy-dev/kleidi/internal/providers"
 	"k8s.io/kms/pkg/service"
@@ -29,14 +30,9 @@ func StartProvider(addr, provider, providerConfig string, debug bool) {
 }
 
 func startSofthsm(addr, provider, providerConfig string, debug bool) {
-
-	if debug {
-		log.Println("test")
-	}
-
 	remoteKMSService, err := providers.NewPKCS11RemoteService(providerConfig, "kleidi-kms-plugin")
 	if err != nil {
-		log.Fatalln("EXIT: remote KMS provider [", provider, "] failed with error:\n", err.Error())
+		zap.L().Fatal("EXIT: remote KMS provider [" + provider + "] failed with error: " + err.Error())
 	}
 	// catch SIG termination.
 	ctx := withShutdownSignal(context.Background())
@@ -48,19 +44,19 @@ func startSofthsm(addr, provider, providerConfig string, debug bool) {
 	// starting service.
 	go func() {
 		if err := grpcService.ListenAndServe(); err != nil {
-			log.Fatalln("EXIT: failed to serve with error:\n", err.Error())
+			zap.L().Fatal("EXIT: failed to serve with error: " + err.Error())
 		}
 	}()
 
 	<-ctx.Done()
-	grpcService.Shutdown()
+	grpcService.Shutdown()     
 }
 
 func startHvault(addr, provider, providerConfig string, debug bool) {
 
 	remoteKMSService, err := providers.NewVaultClientRemoteService(providerConfig, addr, debug)
 	if err != nil {
-		log.Fatalln("EXIT: remote KMS provider [", provider, "] failed with error:\n", err.Error())
+		zap.L().Fatal("EXIT: remote KMS provider [" + provider + "] failed with error: " + err.Error())
 	}
 
 	ctx := withShutdownSignal(context.Background())
@@ -71,7 +67,7 @@ func startHvault(addr, provider, providerConfig string, debug bool) {
 	)
 	go func() {
 		if err := grpcService.ListenAndServe(); err != nil {
-			log.Fatalln("EXIT: failed to serve with error:\n", err.Error())
+			zap.L().Fatal("EXIT: failed to serve with error: " + err.Error())
 		}
 	}()
 
@@ -81,12 +77,7 @@ func startHvault(addr, provider, providerConfig string, debug bool) {
 }
 
 func startTpm(addr, provider, providerConfig string, debug bool) {
-
-	if debug {
-		log.Println("test")
-	}
-
-	log.Println("BETA: flag -provider", provider, "with -listen", addr, "and -configfile", providerConfig, "currently unsafe to used in production.")
+	zap.L().Info("BETA: flag -provider " + provider + " with -listen " + addr + " and -configfile " + providerConfig + " currently unsafe to be used in production.")
 	providers.TmpPlaceholder()
 
 }

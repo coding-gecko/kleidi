@@ -8,13 +8,16 @@ package main
 
 import (
 	"flag"
-	"log"
+	//"log"
 	"os"
+	"go.uber.org/zap"
 
 	"github.com/beezy-dev/kleidi/internal/utils"
+	"github.com/beezy-dev/kleidi/internal/logger"
 )
 
 var kleidiVersion string
+var zapLog *zap.Logger
 
 func main() {
 
@@ -28,34 +31,34 @@ func main() {
 
 	// Parsing environment variables.
 	flag.Parse()
+	// create logger and set is as default
+	zapLog = logger.CreateLogger(*debugMode)
+    defer zapLog.Sync()
+	zap.ReplaceGlobals(zapLog)
 
-	// Prettyfy the starting header fetching built version at compile time.
-	log.Println("--------------------------------------------------------")
-	log.Println("Kleidi", "v"+kleidiVersion, "KMS Provider Plugin for Kubernetes.")
-	log.Println("License Apache 2.0 - https://github.com/beezy-dev/kleidi")
-	log.Println("--------------------------------------------------------")
-
+	zap.L().Info("Kleidi v" + kleidiVersion + ", KMS Provider Plugin for Kubernetes. " + 
+				"License Apache 2.0 - https://github.com/beezy-dev/kleidi")
 	// Validating the socket location.
 	addr, err := utils.ValidateListenAddr(*listenAddr)
 	if err != nil {
-		log.Fatalln("EXIT: flag -listen set to", *listenAddr, "failed with error:\n", err.Error())
+		zap.L().Fatal("EXIT: flag -listen set to" + *listenAddr + " failed with error: " + err.Error())
 	}
 
 	// Checking and cleaning an existing socket in case of ungraceful shutdown.
 	if cleanup := os.Remove(addr); cleanup != nil && !os.IsNotExist(cleanup) {
-		log.Fatalln("EXIT: unable to delete existing socket file", addr, "from directory!")
+		zap.L().Fatal("EXIT: unable to delete existing socket file " + addr + " from directory!")
 	}
 
 	// Validating the provider.
 	provider, err := utils.ValidateProvider(*providerService)
 	if err != nil {
-		log.Fatalln("EXIT: flag -provider set to", provider, "failed with error:\n", err.Error())
+		zap.L().Fatal("EXIT: flag -provider set to " + provider + " failed with error: " + err.Error())
 	}
 
 	// Validating the provider config.
 	providerConfig, err := utils.ValidateConfigfile(*providerConfigFile)
 	if err != nil {
-		log.Fatalln("EXIT: flag -configfile set to", providerConfig, "failed with error:\n", err.Error())
+		zap.L().Fatal("EXIT: flag -configfile set to " + providerConfig + " failed with error: " + err.Error())
 	}
 
 	debug := *debugMode
