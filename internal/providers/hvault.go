@@ -43,14 +43,6 @@ func NewVaultClientRemoteService(configFilePath string, addr string, debug bool)
 	if err != nil {
 		zap.L().Fatal("EXIT:ctx: failed to read vault config file with error: " + err.Error())
 	}
-	if len(keyID) == 0 {
-		zap.L().Fatal("EXIT:keyID len: invalid keyID")
-	}
-
-	// vaultService := &hvaultRemoteService{
-	// 	// keyID: keyID,
-	// 	Debug: debug,
-	// }
 
 	vaultService := &hvaultRemoteService{}
 	vaultService.Debug = debug
@@ -63,7 +55,8 @@ func NewVaultClientRemoteService(configFilePath string, addr string, debug bool)
 	zap.L().Debug("Config loaded:", zap.String("Vault address", vaultService.Address),
 		zap.String("Transit key name", vaultService.Transitkey),
 		zap.String("Vault role", vaultService.Vaultrole),
-		zap.String("Vault namespace", vaultService.Vaultrole))
+		zap.String("Vault namespace", vaultService.Namespace))
+
 	client, err := api.NewClient(vaultconfig)
 	if err != nil {
 		zap.L().Fatal("EXIT:client: failed to initialize Vault client with error: " + err.Error())
@@ -85,14 +78,12 @@ func NewVaultClientRemoteService(configFilePath string, addr string, debug bool)
 		zap.L().Fatal("EXIT:authInfo: no kubernetes auth info was returned after login")
 	}
 
-	// vaultService = &hvaultRemoteService{
-	// 	Client: client,
-	// }
 	vaultService.Client = client
 
 	client.SetNamespace(vaultService.Namespace)
 
 	// obtain latest version of the transit key and create a key ID for it
+	// exit if unable to (initial startup)
 	key, err := vaultService.GetTransitKey(context.Background())
 	if err != nil {
 		zap.L().Fatal("ERROR:key: unable to find transit key, shutting down: " + err.Error())
@@ -101,7 +92,7 @@ func NewVaultClientRemoteService(configFilePath string, addr string, debug bool)
 
 	zap.L().Info("Received key ID on startup: " + vaultService.LatestKeyID)
 
-	// initial token check - it can happen that k8s restarted ??
+	// initial token check
 	err = vaultService.CheckTokenValidity(context.Background())
 	if err != nil {
 		// will call GetVaultToken and that already handles Fatal..
@@ -121,14 +112,15 @@ func (s *hvaultRemoteService) Encrypt(ctx context.Context, uid string, plaintext
 	if err != nil {
 		zap.L().Debug("encrypt:plaintext: " + string([]byte(plaintext)) +
 			" keypath: " + enckeypath + "\nencodepayload: " + fmt.Sprintf("%v", encodepayload))
-		// remove fatal, return error
-		zap.L().Fatal("EXIT:encrypt: with error: " + err.Error())
+		//zap.L().Fatal("EXIT:encrypt: with error: " + err.Error())
+		zap.L().Error("encrypt: with error: " + err.Error())
+		return nil, err
 	}
 	enresult, ok := encrypt.Data["ciphertext"].(string)
 	if !ok {
 		zap.L().Debug("enresult: " + string([]byte(enresult)))
-		// remove fatal, return error
-		zap.L().Fatal("EXIT:enresult: invalid response")
+		zap.L().Error("enresult: invalid response")
+		return nil, errors.New("Invalid response")
 	}
 
 	return &service.EncryptResponse{
@@ -141,7 +133,6 @@ func (s *hvaultRemoteService) Encrypt(ctx context.Context, uid string, plaintext
 }
 
 func (s *hvaultRemoteService) Decrypt(ctx context.Context, uid string, req *service.DecryptRequest) ([]byte, error) {
-
 	if len(req.Annotations) != 1 {
 		zap.L().Error("len:annotations: " + fmt.Sprintf("%v", req.Annotations))
 		return nil, fmt.Errorf("/!\\ invalid annotations")
@@ -149,9 +140,6 @@ func (s *hvaultRemoteService) Decrypt(ctx context.Context, uid string, req *serv
 	if v, ok := req.Annotations[annotationKey]; !ok || string(v) != "1" {
 		return nil, fmt.Errorf("/!\\ invalid version in annotations")
 	}
-	// if req.KeyID != s.LatestKeyID {
-	// 	return nil, fmt.Errorf("/!\\ invalid keyID")
-	// }
 
 	decryptkeypath := fmt.Sprintf("transit/decrypt/%s", s.Transitkey)
 
@@ -162,19 +150,22 @@ func (s *hvaultRemoteService) Decrypt(ctx context.Context, uid string, req *serv
 	encryptedResponse, err := s.Logical().WriteWithContext(ctx, decryptkeypath, encryptedPayload)
 	if err != nil {
 		// remove fatal, return error
-		zap.L().Fatal("EXIT:encryptedResponse: with error: " + err.Error())
+		zap.L().Error("encryptedResponse: with error: " + err.Error())
+		return nil, err
 	}
 
 	response, ok := encryptedResponse.Data["plaintext"].(string)
 	if !ok {
 		// remove fatal, return error
-		zap.L().Fatal("EXIT:response: invalid response")
+		zap.L().Error("response: invalid response")
+		return nil, errors.New("response: invalid response")
 	}
 
 	decodepayload, err := base64.StdEncoding.DecodeString(response)
 	if err != nil {
 		// remove fatal, return error
-		zap.L().Fatal("EXIT:decodepayload: with error: " + err.Error())
+		zap.L().Error("decodepayload: with error: " + err.Error())
+		return nil, err
 	}
 
 	return decodepayload, nil
@@ -215,7 +206,7 @@ func (s *hvaultRemoteService) Status(ctx context.Context) (*service.StatusRespon
 }
 
 func (s *hvaultRemoteService) Health(ctx context.Context) error {
-	// check if it has valid token lease (Vault)
+	// check if kleidi token lease is valid
 	err := s.CheckTokenValidity(ctx)
 	if err != nil {
 		return errors.New("Health:token: token validity check failed: " + err.Error())
@@ -234,8 +225,8 @@ func (s *hvaultRemoteService) Health(ctx context.Context) error {
 		},
 	})
 
+	// decrypt returned an error
 	if err != nil {
-		//zap.L().Error("ERROR:Health: decrypt failed: " + err.Error())
 		return errors.New("Health: decrypt failed: " + err.Error())
 	}
 
@@ -265,6 +256,7 @@ func (s *hvaultRemoteService) GetTransitKey(ctx context.Context) (*api.Secret, e
 		if strings.Contains(err.Error(), "invalid token") {
 			zap.L().Fatal("EXIT:token: invalid token, restarting: " + err.Error())
 		}
+		// e.g. vault sealed
 		return nil, err
 	}
 	zap.L().Debug("Transit key: " + fmt.Sprintf("%v", map[string]interface{}{
@@ -333,9 +325,9 @@ func (s *hvaultRemoteService) CheckTokenValidity(ctx context.Context) error {
 		if err != nil {
 			zap.L().Error("Token update failed: " + err.Error())
 			return errors.New("Token update failed.")
-		} else {
-			zap.L().Info("Token update successful.")
 		}
+		zap.L().Info("Token update successful.")
+		return nil
 	}
 	// no need for token update
 	zap.L().Debug("No need for token update.")
