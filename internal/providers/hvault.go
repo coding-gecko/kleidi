@@ -93,6 +93,8 @@ func NewVaultClientRemoteService(configFilePath string, addr string, debug bool)
 		zap.L().Fatal("EXIT:client: failed to initialize Vault client with error: " + err.Error())
 	}
 
+	client.SetNamespace(vaultService.Namespace)
+
 	k8sAuth, err := auth.NewKubernetesAuth(
 		vaultService.Vaultrole,
 		auth.WithMountPath(vaultService.K8sAuthPath),
