@@ -117,8 +117,6 @@ func NewVaultClientRemoteService(configFilePath string, addr string, debug bool)
 	// }
 	vaultService.Client = client
 
-	client.SetNamespace(vaultService.Namespace)
-
 	// obtain latest version of the transit key and create a key ID for it
 	key, err := vaultService.GetTransitKey(context.Background())
 	if err != nil {
